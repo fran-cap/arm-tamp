@@ -65,7 +65,13 @@ tamp_res tamp_decompressor_init_arm(TampDecompressorArm *decompressor, const Tam
 }
 
 /**
- * ARM Main decompression - Completely flattened for maximum speed
+ * ARM Main decompression - Optimized for maximum throughput
+ *
+ * Key optimizations:
+ * - Pointer-based copy loops (faster than indexed)
+ * - Streamlined bit buffer management
+ * - Reduced register pressure in hot path
+ * - Minimal branching with LIKELY/UNLIKELY hints
  */
 __attribute__((hot, flatten))
 tamp_res tamp_decompressor_decompress_cb_arm(
@@ -118,7 +124,7 @@ tamp_res tamp_decompressor_decompress_cb_arm(
 
     /* Main loop */
     while (in < in_end || bbp) {
-        /* Refill bit buffer at start of each iteration (matches standard) */
+        /* Refill bit buffer */
         while (in < in_end && bbp <= 24) {
             bb |= ((uint32_t)*in++) << (24 - bbp);
             bbp += 8;
@@ -135,14 +141,9 @@ tamp_res tamp_decompressor_decompress_cb_arm(
             goto cleanup;
         }
 
-        /* 
-         * ARM OPTIMIZATION: Branchless token/literal test
-         * Use arithmetic to avoid branch misprediction
-         */
-        uint32_t is_literal = bb >> 31;
-        
-        if (TAMP_LIKELY(!is_literal)) {
-            /* ===== TOKEN PATH ===== */
+        /* Token/literal test - MSB determines type */
+        if (TAMP_LIKELY(!(bb >> 31))) {
+            /* ===== TOKEN PATH (most common) ===== */
             uint32_t tbb = bb << 1;
             uint32_t tbbp = bbp - 1;
 
@@ -151,13 +152,10 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                 goto cleanup;
             }
 
-            int32_t match_size;
+            uint32_t match_size;
             uint32_t huffman_bits;
-            
-            /* 
-             * ARM OPTIMIZATION: Combine huffman decode cases
-             * The most common case (match_size=0) still gets fast path
-             */
+
+            /* Fast path for match_size=0 (most common token) */
             if (TAMP_LIKELY(!(tbb >> 31))) {
                 match_size = 0;
                 huffman_bits = 1;
@@ -173,13 +171,6 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                     uint32_t discard = tbbp & 7;
                     bb = tbb << discard;
                     bbp = tbbp & ~7u;
-                    
-                    /* Refill after flush */
-                    while (bbp <= 24 && in < in_end) {
-                        bb |= ((uint32_t)*in++) << (24 - bbp);
-                        bbp += 8;
-                        input_consumed_local++;
-                    }
                     continue;
                 }
             }
@@ -193,18 +184,18 @@ tamp_res tamp_decompressor_decompress_cb_arm(
             }
 
             match_size += min_pat;
-            uint32_t woff = tbb >> cwin_shift;
+            const uint32_t woff = tbb >> cwin_shift;
 
-            if (TAMP_UNLIKELY(woff >= wsize || woff + (uint32_t)match_size > wsize)) {
+            if (TAMP_UNLIKELY(woff >= wsize || woff + match_size > wsize)) {
                 res = TAMP_OOB;
                 goto cleanup;
             }
 
-            int32_t ms_skip = match_size - (int32_t)skip;
-            uint32_t woff_skip = woff + skip;
+            uint32_t ms_skip = match_size - skip;
+            const uint32_t woff_skip = woff + skip;
 
-            size_t remaining = out_end - out;
-            if (TAMP_UNLIKELY((uint32_t)ms_skip > remaining)) {
+            const size_t remaining = out_end - out;
+            if (TAMP_UNLIKELY(ms_skip > remaining)) {
                 skip += remaining;
                 ms_skip = remaining;
             } else {
@@ -213,45 +204,50 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                 bbp = tbbp - cwin;
             }
 
-            /* 
-             * ARM OPTIMIZATION: Fused copy loop
-             * Copy to output and window simultaneously when possible
+            /*
+             * OPTIMIZATION: Fused output+window copy for common case
+             * When skip==0, ms_skip==match_size and woff_skip==woff
              */
-            const unsigned char *src = win + woff_skip;
-            
             if (TAMP_LIKELY(skip == 0)) {
-                /* Full decode - update window with full match */
-                uint32_t safe_dist = (wpos >= woff) ? (wpos - woff) : (wpos + wsize - woff);
+                const uint32_t dist = (wpos >= woff) ? (wpos - woff) : (wpos + wsize - woff);
 
-                /* Copy remaining bytes (ms_skip) to output from woff_skip */
-                for (int32_t i = 0; i < ms_skip; i++) {
-                    out[i] = src[i];
-                }
+                if (TAMP_LIKELY(dist >= match_size)) {
+                    /* No overlap - fused copy to output and window in one pass */
+                    const unsigned char *__restrict__ src = win + woff;
+                    unsigned char *__restrict__ dst_out = out;
+                    uint32_t count = match_size;
 
-                if (TAMP_LIKELY(safe_dist >= (uint32_t)match_size)) {
-                    /* No overlap - direct window copy */
-                    for (int32_t i = 0; i < match_size; i++) {
-                        win[wpos] = win[woff + i];
+                    while (count--) {
+                        unsigned char c = *src++;
+                        *dst_out++ = c;
+                        win[wpos] = c;
                         wpos = (wpos + 1) & wmask;
                     }
                 } else {
-                    /* Overlap case - use temporary buffer for window update */
+                    /* Overlap case - copy to temp, then distribute */
                     uint8_t tmp[16];
-                    for (int32_t i = 0; i < match_size; i++) {
-                        tmp[i] = win[woff + i];
+                    const unsigned char *src = win + woff;
+                    for (uint32_t i = 0; i < match_size; i++) {
+                        tmp[i] = src[i];
                     }
-                    for (int32_t i = 0; i < match_size; i++) {
+                    /* Copy to output */
+                    for (uint32_t i = 0; i < match_size; i++) {
+                        out[i] = tmp[i];
+                    }
+                    /* Update window */
+                    for (uint32_t i = 0; i < match_size; i++) {
                         win[wpos] = tmp[i];
                         wpos = (wpos + 1) & wmask;
                     }
                 }
             } else {
                 /* Partial decode - just copy to output */
-                for (int32_t i = 0; i < ms_skip; i++) {
+                const unsigned char *__restrict__ src = win + woff_skip;
+                for (uint32_t i = 0; i < ms_skip; i++) {
                     out[i] = src[i];
                 }
             }
-            
+
             out += ms_skip;
             output_written_local += ms_skip;
 
@@ -262,19 +258,19 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                 goto cleanup;
             }
 
-            /* Combined shift operations */
-            uint8_t literal = (bb << 1) >> clit_shift;
+            /* Extract literal and update bit buffer */
+            const uint8_t literal = (bb << 1) >> clit_shift;
             bb <<= lit_bits;
             bbp -= lit_bits;
 
-            /* Single write to both output and window */
+            /* Write to both output and window */
             *out++ = literal;
             win[wpos] = literal;
             wpos = (wpos + 1) & wmask;
             output_written_local++;
         }
 
-        /* Callback check */
+        /* Callback check - rarely used */
         if (TAMP_UNLIKELY(callback != NULL)) {
             res = callback(user_data, output_written_local, input_size);
             if (res != 0) goto cleanup;
