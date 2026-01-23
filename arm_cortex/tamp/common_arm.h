@@ -8,9 +8,9 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>
 
-// If standard common.h hasn't been included, provide minimal type definitions
+// FC, Include standard functions so we can compile
 #ifndef TAMP_OK
-#include "tamp/common.h"
+#include "../../tamp/_c_src/tamp/common.h"
 #endif
 
 /**

@@ -186,7 +186,9 @@ tamp_res tamp_decompressor_decompress_cb_arm(
             match_size += min_pat;
             const uint32_t woff = tbb >> cwin_shift;
 
-            if (TAMP_UNLIKELY(woff >= wsize || woff + match_size > wsize)) {
+            /* woff is extracted with cwin bits, so woff < wsize by construction.
+             * Only need to check if copy would exceed window bounds. */
+            if (TAMP_UNLIKELY(woff + match_size > wsize)) {
                 res = TAMP_OOB;
                 goto cleanup;
             }
@@ -209,7 +211,8 @@ tamp_res tamp_decompressor_decompress_cb_arm(
              * When skip==0, ms_skip==match_size and woff_skip==woff
              */
             if (TAMP_LIKELY(skip == 0)) {
-                const uint32_t dist = (wpos >= woff) ? (wpos - woff) : (wpos + wsize - woff);
+                /* Branchless distance calculation using mask */
+                const uint32_t dist = (wpos - woff) & wmask;
 
                 if (TAMP_LIKELY(dist >= match_size)) {
                     /* No overlap - fused copy to output and window in one pass */
