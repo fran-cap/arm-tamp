@@ -25,6 +25,7 @@
 
 #define WINDOW_BITS 10
 #define WINDOW_SIZE (1 << WINDOW_BITS)
+#define DEFAULT_ITERATIONS 10
 
 // Helper function to read entire file into memory
 static unsigned char* read_file(const char *filename, size_t *size_out) {
@@ -92,7 +93,8 @@ int main(int argc, char *argv[]) {
 
     printf("=== ARM Cortex Decompressor A/B Benchmark ===\n");
     printf("Input: %s\n", input_file);
-    printf("Window: %u bytes (%u bits)\n\n", WINDOW_SIZE, WINDOW_BITS);
+    printf("Window: %u bytes (%u bits)\n", WINDOW_SIZE, WINDOW_BITS);
+    printf("Iterations: %d\n\n", DEFAULT_ITERATIONS);
 
     // Step 1: Read input file
     input_data = read_file(input_file, &input_size);
@@ -139,54 +141,62 @@ int main(int argc, char *argv[]) {
     printf("OK (%.1f%% ratio)\n", compression_ratio);
 
     // Step 3: Baseline - Standard decompressor
-    printf("[2/4] Baseline: Standard decompressor... ");
+    printf("[2/4] Baseline: Standard decompressor (%d iterations)... ", DEFAULT_ITERATIONS);
     fflush(stdout);
 
-    TampDecompressor std_decompressor;
-    tamp_decompressor_init(&std_decompressor, NULL, std_window, WINDOW_BITS);
+    double std_total_time = 0.0;
+    for (int iter = 0; iter < DEFAULT_ITERATIONS; iter++) {
+        TampDecompressor std_decompressor;
+        tamp_decompressor_init(&std_decompressor, NULL, std_window, WINDOW_BITS);
 
-    clock_t std_start = clock();
+        clock_t std_start = clock();
 
-    res = tamp_decompressor_decompress(&std_decompressor, std_output, input_size,
-                                       &std_output_size, compressed_data, compressed_size,
-                                       &input_consumed);
-
-    clock_t std_end = clock();
-    double std_time = (double)(std_end - std_start) / CLOCKS_PER_SEC;
-
-    if (res < TAMP_OK) {
-        fprintf(stderr, "FAILED\n");
-        fprintf(stderr, "ERROR: Standard decompression failed (res=%d)\n", res);
-        goto cleanup;
-    }
-
-    double std_throughput = (std_output_size / 1024.0 / 1024.0) / std_time;
-    printf("%.3fs (%.2f MB/s)\n", std_time, std_throughput);
-
-    // Step 4: Testing - ARM decompressor
-    printf("[3/4] Testing: ARM decompressor... ");
-    fflush(stdout);
-
-    TampDecompressorArm arm_decompressor;
-    tamp_decompressor_init_arm(&arm_decompressor, NULL, arm_window);
-
-    clock_t arm_start = clock();
-
-    res = tamp_decompressor_decompress_arm(&arm_decompressor, arm_output, input_size,
-                                           &arm_output_size, compressed_data, compressed_size,
+        res = tamp_decompressor_decompress(&std_decompressor, std_output, input_size,
+                                           &std_output_size, compressed_data, compressed_size,
                                            &input_consumed);
 
-    clock_t arm_end = clock();
-    double arm_time = (double)(arm_end - arm_start) / CLOCKS_PER_SEC;
+        clock_t std_end = clock();
+        std_total_time += (double)(std_end - std_start) / CLOCKS_PER_SEC;
 
-    if (res < TAMP_OK) {
-        fprintf(stderr, "FAILED\n");
-        fprintf(stderr, "ERROR: ARM decompression failed (res=%d)\n", res);
-        goto cleanup;
+        if (res < TAMP_OK) {
+            fprintf(stderr, "FAILED\n");
+            fprintf(stderr, "ERROR: Standard decompression failed (res=%d) on iteration %d\n", res, iter);
+            goto cleanup;
+        }
     }
 
+    double std_time = std_total_time / DEFAULT_ITERATIONS;
+    double std_throughput = (std_output_size / 1024.0 / 1024.0) / std_time;
+    printf("%.3fs avg (%.2f MB/s)\n", std_time, std_throughput);
+
+    // Step 4: Testing - ARM decompressor
+    printf("[3/4] Testing: ARM decompressor (%d iterations)... ", DEFAULT_ITERATIONS);
+    fflush(stdout);
+
+    double arm_total_time = 0.0;
+    for (int iter = 0; iter < DEFAULT_ITERATIONS; iter++) {
+        TampDecompressorArm arm_decompressor;
+        tamp_decompressor_init_arm(&arm_decompressor, NULL, arm_window);
+
+        clock_t arm_start = clock();
+
+        res = tamp_decompressor_decompress_arm(&arm_decompressor, arm_output, input_size,
+                                               &arm_output_size, compressed_data, compressed_size,
+                                               &input_consumed);
+
+        clock_t arm_end = clock();
+        arm_total_time += (double)(arm_end - arm_start) / CLOCKS_PER_SEC;
+
+        if (res < TAMP_OK) {
+            fprintf(stderr, "FAILED\n");
+            fprintf(stderr, "ERROR: ARM decompression failed (res=%d) on iteration %d\n", res, iter);
+            goto cleanup;
+        }
+    }
+
+    double arm_time = arm_total_time / DEFAULT_ITERATIONS;
     double arm_throughput = (arm_output_size / 1024.0 / 1024.0) / arm_time;
-    printf("%.3fs (%.2f MB/s)\n", arm_time, arm_throughput);
+    printf("%.3fs avg (%.2f MB/s)\n", arm_time, arm_throughput);
 
     // Step 5: Verification
     printf("[4/4] Verification... ");
@@ -239,13 +249,13 @@ int main(int argc, char *argv[]) {
     }
 
     // Print results
-    printf("\n=== Results ===\n");
+    printf("\n=== Results (%d iterations) ===\n", DEFAULT_ITERATIONS);
     printf("Input size:      %zu bytes\n", input_size);
     printf("Compressed size: %zu bytes (%.1f%%)\n\n", compressed_size, compression_ratio);
 
     double speedup = std_time / arm_time;
-    printf("Standard:  %.3fs (%.2f MB/s)\n", std_time, std_throughput);
-    printf("ARM:       %.3fs (%.2f MB/s)\n", arm_time, arm_throughput);
+    printf("Standard:  %.3fs avg (%.3fs total, %.2f MB/s)\n", std_time, std_total_time, std_throughput);
+    printf("ARM:       %.3fs avg (%.3fs total, %.2f MB/s)\n", arm_time, arm_total_time, arm_throughput);
     printf("Speedup:   %.2fx\n\n", speedup);
 
     printf("Status:    %s\n", verified ? "PASS \xE2\x9C\x93" : "FAIL \xE2\x9C\x97");
