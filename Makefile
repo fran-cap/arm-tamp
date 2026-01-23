@@ -453,7 +453,7 @@ c-benchmark-stream: download-enwik8
 # Quick A/B test with 100KB file
 arm-quick-test: build/enwik8-100kb
 	@mkdir -p build
-	gcc -O3 -Wall -Wextra \
+	gcc -Os -Wall -Wextra \
 		-Itamp/_c_src -Iarm_cortex/tamp \
 		arm_cortex/benchmark_decompressor_arm.c \
 		arm_cortex/tamp/decompressor_arm.c \
@@ -467,7 +467,7 @@ arm-quick-test: build/enwik8-100kb
 # Full A/B benchmark with enwik8 (100MB)
 arm-benchmark: download-enwik8
 	@mkdir -p build
-	gcc -O3 -Wall -Wextra \
+	gcc -Os -Wall -Wextra \
 		-Itamp/_c_src -Iarm_cortex/tamp \
 		arm_cortex/benchmark_decompressor_arm.c \
 		arm_cortex/tamp/decompressor_arm.c \
