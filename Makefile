@@ -22,6 +22,8 @@ help:
 	@echo "Other targets:"
 	@echo "  make binary-size        Show binary sizes for README table"
 	@echo "  make c-benchmark-stream Benchmark stream API with various temporary working buffer sizes"
+	@echo "  make arm-quick-test     ARM vs Standard A/B test (100KB)"
+	@echo "  make arm-benchmark      ARM vs Standard A/B benchmark (100MB)"
 	@echo "  make download-enwik8    Download enwik8 test dataset"
 	@echo "  make tamp-c-library     Build static C library"
 	@echo "  make website-build      Build website for deployment"
@@ -441,6 +443,44 @@ c-benchmark-stream: download-enwik8
 		printf "%-20s %-15s %s\n" "$$size bytes" "$${compress_time}s" "$${decompress_time}s"; \
 	done
 	@rm -f build/benchmark_stream_*
+
+
+##################################
+# ARM Cortex Decompressor A/B Tests
+##################################
+.PHONY: arm-quick-test arm-benchmark arm-test
+
+# Quick A/B test with 100KB file
+arm-quick-test: build/enwik8-100kb
+	@mkdir -p build
+	gcc -O3 -Wall -Wextra \
+		-Itamp/_c_src -Iarm_cortex/tamp \
+		arm_cortex/benchmark_decompressor_arm.c \
+		arm_cortex/tamp/decompressor_arm.c \
+		arm_cortex/tamp/common_arm.c \
+		tamp/_c_src/tamp/common.c \
+		tamp/_c_src/tamp/compressor.c \
+		tamp/_c_src/tamp/decompressor.c \
+		-o build/arm_benchmark
+	./build/arm_benchmark build/enwik8-100kb
+
+# Full A/B benchmark with enwik8 (100MB)
+arm-benchmark: download-enwik8
+	@mkdir -p build
+	gcc -O3 -Wall -Wextra \
+		-Itamp/_c_src -Iarm_cortex/tamp \
+		arm_cortex/benchmark_decompressor_arm.c \
+		arm_cortex/tamp/decompressor_arm.c \
+		arm_cortex/tamp/common_arm.c \
+		tamp/_c_src/tamp/common.c \
+		tamp/_c_src/tamp/compressor.c \
+		tamp/_c_src/tamp/decompressor.c \
+		-o build/arm_benchmark
+	./build/arm_benchmark datasets/enwik8
+
+# Lightweight verification test
+arm-test: build/enwik8-100kb
+	@$(MAKE) --no-print-directory arm-quick-test
 
 
 #############

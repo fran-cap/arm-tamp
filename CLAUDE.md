@@ -22,6 +22,7 @@ different platforms:
   - MicroPython Native Module (`mpy_bindings/`)
 - **WebAssembly** (`wasm/`) - JavaScript/TypeScript bindings via Emscripten
 - **ESP-IDF Component** (`espidf/`) - ESP32 optimized version
+- **ARM Component** (`arm_cortex/`) - ARM Cortex optimized version
 
 **Shared C Source:** All implementations use the same C source code in
 `tamp/_c_src/tamp/`:
