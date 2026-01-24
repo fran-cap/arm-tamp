@@ -1,4 +1,17 @@
 <div align="center">
+
+# This is an ARM Optimized version of Tamp
+ - tested on real RASPI 5 hardware.
+ - All files stored in /arm_cortex/
+ - Files have different function names to distinguish them from normal tamp functions "_arm"
+ - A new "make arm-benchmark" has been created to test this.
+ - Average speedup is 1.41x the original
+ - Credit for original code and licenceing is given below per the original repo (Thanks Brian!)
+
+</div>
+
+
+<div align="center">
   <img src="https://raw.githubusercontent.com/BrianPugh/tamp/main/assets/logo_300w.png">
 </div>
 

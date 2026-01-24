@@ -2,12 +2,31 @@
 
 The directory contains code for the arm cortex optimized tamp component
 
+## Benchmark Environment
+
+| Component | Details |
+|-----------|---------|
+| Hardware | Raspberry Pi 5 |
+| CPU | ARM Cortex-A76, 4 cores @ 2.4 GHz |
+| Architecture | aarch64 (ARMv8-A) |
+| Cache | L1d: 256 KiB, L1i: 256 KiB, L2: 2 MiB, L3: 2 MiB |
+| RAM | 8 GB |
+| OS | Debian 12 (bookworm) / Raspberry Pi OS |
+| Compiler | GCC 12.2.0 |
+
 ## Optimization notes:
-# most recent speedup ratio vs standard
-1.49x (with -Os compiler flag)
-1.45x (with -03 -flto compiler flag)
+
+### Current speedup
+- **1.41x** with `-O3` (180 MB/s ARM vs 128 MB/s standard)
+- **1.32x** with `-Os` (142 MB/s ARM vs 108 MB/s standard)
 
 # what hasnt worked:
+- **Table-driven unified decode (512-entry)**: 1.24x (158 MB/s) - single table lookup for token/literal/flush + huffman decode. 1KB table causes cache pressure and extraction logic (3 shifts/masks) more expensive than well-predicted branches
+- **Clang/LLVM compiler**: 1.30x (166 MB/s) vs GCC 1.41x (180 MB/s). GCC fully unrolls copy loop to ~16 cases while Clang uses real loop. GCC wins by 8%
+- **Speculative decoding**: 1.37x (175 MB/s) - decode next token speculatively while current copy executes. Duplicated copy code hurts I-cache
+- **Batch token decoding**: broke end-of-stream handling - attempted to decode multiple tokens before applying copies, but partial token at stream end caused incorrect output
+- **Cleanup label restructuring**: 1.33x (170 MB/s) - separate goto labels for each exit condition (input_exhausted, output_full, oob) to enable conditional jumps. Extra labels hurt branch prediction
+- **Copy loop unrolling by 4**: 1.34x (170.89 MB/s) - manual 4-iteration unroll with cleanup. GCC -O3 already optimizes better
 - **using memcopy/memmove anywhere**: slowwwwwwww, 1.01x, overhead in stdlib
 - **Prefetch the window data we're about to copy**: had 0 impact
 - **switch based unroll for cases 2,3,4**: slower
@@ -30,9 +49,16 @@ The directory contains code for the arm cortex optimized tamp component
 - **Simplify overlap to single loop (I-cache revisit)**: tested with -Os, 1.47x-1.51x vs baseline. No measurable improvement, but kept change for cleaner code (2 loops instead of 3)
 - **Move FLUSH to cold path (I-cache revisit)**: tested with -Os using `__attribute__((cold))`, 1.39x-1.54x vs baseline. No improvement, function call overhead negates any I-cache benefit
 - **Remove match_size=0 fast path (I-cache revisit)**: same as 9-bit Huffman table test - the well-predicted branch is still faster than table lookup even with -Os
-
-# tested but inconclusive (measurement noise):
-(none remaining)
+- **-O3 -flto**: 1.33x - LTO hurts ARM decompressor (was 180 MB/s, dropped to 172 MB/s). Standard got tiny boost.
+- **-march=native -mtune=native**: 1.38x - native tuning slightly worse than plain -O3 (1.41x)
+- **Prefetch (PLD)**: 1.40x - still hurts on real hardware (177 MB/s vs 180 MB/s baseline)
+- **memcpy for non-overlap copies**: 1.18x - significantly slower (149 MB/s), even real ARM libc memcpy has too much overhead for small copies + extra window update loop
+- **NEON intrinsics for copy loops**: 1.35x - slower (172 MB/s). Match sizes typically 2-15 bytes, so 8-byte NEON path rarely triggers; branch overhead for size check hurts
+- **No-wrap path optimization**: 1.36x - slower (175 MB/s). Branch to check `wpos + match_size <= wsize` costs more than per-byte AND mask. ARM executes `& wmask` very efficiently
+- **64-bit bit buffer**: 1.41x (178 MB/s) - no improvement over 32-bit. ARM64 has native 64-bit ops but larger buffer doesn't reduce refill frequency enough to matter
+- **Address-independent refill (unrolled)**: 1.38x - slower (174 MB/s). Nested if statements add overhead vs simple while loop
+- **Negative indexing copy loop**: 1.33x - slower (168 MB/s). End-pointer setup and negative index arithmetic costs more than simple increment
+- **Lookahead amortization**: 1.40x - no improvement. Single upfront bit check vs two separate checks is noise-level difference
 
 # worked:
 - **simplifying the OOB check**: woff is extracted with only cwin bits, it's already bounded by wsize
@@ -42,7 +68,4 @@ The directory contains code for the arm cortex optimized tamp component
 - **Profile-guided match_size=0**: Fast path with single bit check for most common token
 - **Separate hot/cold paths**: Token path is the main loop body, literal is else branch
 - **128-entry Huffman table**: Already has O(1) lookup for codes up to 7 bits
-- **-Os compiler flag**: Smaller code = better I-cache utilization. Tested on enwik8: -O3 gave 1.26x, -Os gave 1.49x. Note: -Os + -flto is worse (1.20x), don't combine them, only use -o3 + -flto
-
-# to try:
-(none remaining - all I-cache-aware revisits tested, see "hasn't worked" section)
+- **-Os compiler flag**: ~~Smaller code = better I-cache utilization~~ REVERSED: -O3 (1.41x) beats -Os (1.32x)
