@@ -227,19 +227,17 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                         wpos = (wpos + 1) & wmask;
                     }
                 } else {
-                    /* Overlap case - copy to temp, then distribute */
+                    /* Overlap case - snapshot to temp, then single distribute loop */
                     uint8_t tmp[16];
                     const unsigned char *src = win + woff;
                     for (uint32_t i = 0; i < match_size; i++) {
                         tmp[i] = src[i];
                     }
-                    /* Copy to output */
+                    /* Combined output + window write */
                     for (uint32_t i = 0; i < match_size; i++) {
-                        out[i] = tmp[i];
-                    }
-                    /* Update window */
-                    for (uint32_t i = 0; i < match_size; i++) {
-                        win[wpos] = tmp[i];
+                        uint8_t c = tmp[i];
+                        out[i] = c;
+                        win[wpos] = c;
                         wpos = (wpos + 1) & wmask;
                     }
                 }

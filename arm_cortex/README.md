@@ -26,6 +26,10 @@ The directory contains code for the arm cortex optimized tamp component
 - **Unroll XorShift**: Dictionary init is negligible portion of total time
 - **Character table in registers**: Same as above - init cost too small to matter
 - **Register pressure reduction**: un-caching min_pat/wsize - compiler -O3 already optimizes register allocation well
+- **9-bit Huffman table (I-cache revisit)**: tested with -Os, 1.41x-1.47x vs baseline 1.47x-1.55x. Larger table (512 bytes) hurts D-cache more than simpler code helps I-cache
+- **Simplify overlap to single loop (I-cache revisit)**: tested with -Os, 1.47x-1.51x vs baseline. No measurable improvement, but kept change for cleaner code (2 loops instead of 3)
+- **Move FLUSH to cold path (I-cache revisit)**: tested with -Os using `__attribute__((cold))`, 1.39x-1.54x vs baseline. No improvement, function call overhead negates any I-cache benefit
+- **Remove match_size=0 fast path (I-cache revisit)**: same as 9-bit Huffman table test - the well-predicted branch is still faster than table lookup even with -Os
 
 # tested but inconclusive (measurement noise):
 (none remaining)
@@ -41,4 +45,4 @@ The directory contains code for the arm cortex optimized tamp component
 - **-Os compiler flag**: Smaller code = better I-cache utilization. Tested on enwik8: -O3 gave 1.26x, -Os gave 1.49x. Note: -Os + -flto is worse (1.20x), don't combine them, only use -o3 + -flto
 
 # to try:
-(none currently - most low-hanging fruit has been tried)
+(none remaining - all I-cache-aware revisits tested, see "hasn't worked" section)
