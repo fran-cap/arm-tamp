@@ -22,20 +22,20 @@
  * Indexed by 7 bits from the bit stream.
  *
  * Entry format: (huffman_bits << 4) | match_size
- *   - huffman_bits: number of bits in this code minus 1 (actual bits = entry>>4 + 1)
+ *   - huffman_bits: actual number of bits in this code (saves +1 operation)
  *   - match_size: decoded value (0-13, or 15 for FLUSH)
  *
  * Aligned to 128 bytes for cache efficiency.
  */
 static const uint8_t HUFFMAN_TABLE[128] __attribute__((aligned(128))) = {
-    50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50,  50,
-    85, 85, 85, 85, 122, 123, 104, 104, 86, 86, 86, 86, 93, 93, 93, 93,
-    68, 68, 68, 68, 68, 68, 68, 68, 105, 105, 124, 127, 87, 87, 87, 87,
-    51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51,
-    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17
+    66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,       /* ms=2, bits=4 */
+    101, 101, 101, 101, 138, 139, 120, 120, 102, 102, 102, 102, 109, 109, 109, 109,
+    84, 84, 84, 84, 84, 84, 84, 84, 121, 121, 140, 143, 103, 103, 103, 103,
+    67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,       /* ms=3, bits=4 */
+    33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33,       /* ms=1, bits=2 */
+    33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33,
+    33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33,
+    33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33, 33
 };
 
 /*============================================================================
@@ -114,8 +114,6 @@ tamp_res tamp_decompressor_decompress_cb_arm(
     tamp_callback_t callback,
     void *user_data
 ) {
-    size_t input_consumed_local = 0;
-    size_t output_written_local = 0;
     tamp_res res;
 
     /* Input/output pointers */
@@ -144,7 +142,6 @@ tamp_res tamp_decompressor_decompress_cb_arm(
         if (res != TAMP_OK) goto cleanup;
 
         in += header_consumed_size;
-        input_consumed_local += header_consumed_size;
         win = decompressor->window;
     }
 
@@ -171,7 +168,6 @@ tamp_res tamp_decompressor_decompress_cb_arm(
         while (in < in_end && bbp <= 24) {
             bb |= ((uint32_t)*in++) << (24 - bbp);
             bbp += 8;
-            input_consumed_local++;
         }
 
         /* Check for input/output exhaustion */
@@ -208,9 +204,8 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                 huffman_bits = 1;
             } else {
                 /* Decode match_size from Huffman table */
-                uint32_t code = (tbb >> 24) & 0x7F;
-                uint32_t entry = HUFFMAN_TABLE[code];
-                huffman_bits = (entry >> 4) + 1;
+                uint32_t entry = HUFFMAN_TABLE[(tbb >> 24) & 0x7F];
+                huffman_bits = entry >> 4;  /* Table stores actual bits (saves +1 op) */
                 match_size = entry & 0xF;
 
                 /* Handle FLUSH token (byte-align the bit buffer) */
@@ -270,20 +265,20 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                     uint32_t count = match_size;
 
                     while (count--) {
-                        unsigned char c = *src++;
+                        uint32_t c = *src++;  /* Use uint32_t to avoid char-to-int conversion */
                         *dst_out++ = c;
                         win[wpos] = c;
                         wpos = (wpos + 1) & wmask;
                     }
                 } else {
                     /* Overlap: snapshot source first, then copy */
-                    uint8_t tmp[16];
+                    uint32_t tmp[16];  /* Use uint32_t to avoid char arithmetic overhead */
                     const unsigned char *src = win + woff;
                     for (uint32_t i = 0; i < match_size; i++) {
                         tmp[i] = src[i];
                     }
                     for (uint32_t i = 0; i < match_size; i++) {
-                        uint8_t c = tmp[i];
+                        uint32_t c = tmp[i];
                         out[i] = c;
                         win[wpos] = c;
                         wpos = (wpos + 1) & wmask;
@@ -298,7 +293,6 @@ tamp_res tamp_decompressor_decompress_cb_arm(
             }
 
             out += ms_skip;
-            output_written_local += ms_skip;
 
         } else {
             /*
@@ -310,7 +304,8 @@ tamp_res tamp_decompressor_decompress_cb_arm(
                 goto cleanup;
             }
 
-            const uint8_t literal = (bb << 1) >> clit_shift;
+            /* Use uint32_t to avoid char-to-int conversion overhead */
+            const uint32_t literal = (bb << 1) >> clit_shift;
             bb <<= lit_bits;
             bbp -= lit_bits;
 
@@ -318,12 +313,12 @@ tamp_res tamp_decompressor_decompress_cb_arm(
             *out++ = literal;
             win[wpos] = literal;
             wpos = (wpos + 1) & wmask;
-            output_written_local++;
         }
 
         /* Progress callback (rarely used) */
         if (TAMP_UNLIKELY(callback != NULL)) {
-            res = callback(user_data, output_written_local, input_size);
+            /* Compute written count from pointer difference */
+            res = callback(user_data, (size_t)(out - output), input_size);
             if (res != 0) goto cleanup;
         }
     }
@@ -337,8 +332,10 @@ cleanup:
     decompressor->window_pos = wpos;
     decompressor->skip_bytes = skip;
 
-    if (output_written_size) *output_written_size = output_written_local;
-    if (input_consumed_size) *input_consumed_size = input_consumed_local;
+    /* Compute written count from pointer difference - eliminates per-byte increment */
+    if (output_written_size) *output_written_size = (size_t)(out - output);
+    /* Compute consumed bytes from pointer difference - eliminates per-byte increment */
+    if (input_consumed_size) *input_consumed_size = (size_t)(in - input);
 
     return res;
 }

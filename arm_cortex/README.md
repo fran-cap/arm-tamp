@@ -17,7 +17,7 @@ The directory contains code for the arm cortex optimized tamp component
 ## Optimization notes:
 
 ### Current speedup
-- **1.41x** with `-O3` (180 MB/s ARM vs 128 MB/s standard)
+- **1.42x** with `-O3` (183 MB/s ARM vs 129 MB/s standard)
 - **1.32x** with `-Os` (142 MB/s ARM vs 108 MB/s standard)
 
 # what hasnt worked:
@@ -59,6 +59,12 @@ The directory contains code for the arm cortex optimized tamp component
 - **Address-independent refill (unrolled)**: 1.38x - slower (174 MB/s). Nested if statements add overhead vs simple while loop
 - **Negative indexing copy loop**: 1.33x - slower (168 MB/s). End-pointer setup and negative index arithmetic costs more than simple increment
 - **Lookahead amortization**: 1.40x - no improvement. Single upfront bit check vs two separate checks is noise-level difference
+- **Loop count-down with do-while (PMC6263706)**: 1.37x (177 MB/s) - converting copy loops to count-down form with separate index tracking adds overhead; GCC -O3 already optimizes while(count--) well
+- **Unrolled refill with nested ifs (Giesen)**: 1.36x (176 MB/s) - replacing while loop with cascaded if-statements worse than simple while loop on ARM
+- **Combined shifts with inlined fast path (Dougall)**: 1.37x (176 MB/s) - duplicating copy code for fast path (match_size=0) hurts I-cache, same issue as speculative decoding
+- **32-bit word loads for refill (Dougall)**: Not directly applicable - MSB-first 32-bit buffer would overflow; would need 64-bit buffer (already tried, no gain)
+- **LSB-first bit buffer (Giesen)**: Would require complete rewrite; MSB-first matches TAMP's compression format
+- **Rotate-based extraction (Giesen)**: Only helps when extracting from bottom after rotation; our MSB-first format extracts from top
 
 # worked:
 - **simplifying the OOB check**: woff is extracted with only cwin bits, it's already bounded by wsize
@@ -69,3 +75,8 @@ The directory contains code for the arm cortex optimized tamp component
 - **Separate hot/cold paths**: Token path is the main loop body, literal is else branch
 - **128-entry Huffman table**: Already has O(1) lookup for codes up to 7 bits
 - **-Os compiler flag**: ~~Smaller code = better I-cache utilization~~ REVERSED: -O3 (1.41x) beats -Os (1.32x)
+- **Pointer difference for counting (PMC6263706)**: 1.42x (183 MB/s) - compute `in - input` at cleanup instead of incrementing counter per-byte in refill loop. Eliminates one add per input byte.
+- **Integer for character temps (PMC6263706)**: uint32_t for literal and copy temps instead of uint8_t avoids implicit char-to-int conversions (marginal improvement, kept for cleanliness)
+- **Baked-in huffman_bits in table**: Table stores actual bit count instead of (bits-1), eliminating +1 operation (GCC may already fold this, kept for clarity)
+- **256-entry Huffman table (eliminates & 0x7F mask)**: Same performance - 2x cache footprint offsets mask elimination, reverted to 128-entry
+- **Shift+mask vs double-shift for literal**: `(bb >> rshift) & mask` is slightly slower than `(bb << 1) >> clit_shift` - kept double-shift
