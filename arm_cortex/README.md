@@ -17,7 +17,7 @@ The directory contains code for the arm cortex optimized tamp component
 ## Optimization notes:
 
 ### Current speedup
-- **1.42x** with `-O3` (183 MB/s ARM vs 129 MB/s standard)
+- **1.45x** with `-O3` (186 MB/s ARM vs 128 MB/s standard)
 - **1.32x** with `-Os` (142 MB/s ARM vs 108 MB/s standard)
 
 # what hasnt worked:
@@ -42,6 +42,8 @@ The directory contains code for the arm cortex optimized tamp component
 - **memset shortcut for dist==1 overlap**: INCORRECT - dist==1 doesn't mean RLE. The source bytes win[woff..woff+n] can still be different values; dist only indicates circular distance between read/write positions
 - **4-wide loop unrolling in copy loop**: tested on enwik8 (100MB) - baseline 1.29x vs unrolled 1.25x, manual unrolling actually SLOWER than compiler -O3 auto-optimization
 - **Prefetch input bytes (PLD)**: tested on enwik8 - baseline 1.29x vs prefetch 1.24x, prefetch actually HURTS performance (cache pollution or branch overhead)
+- **Switch-based refill (jump table)**: 1.33x (170 MB/s) - replacing while loop with switch on bytes-to-add. Computing space/avail/min and jump table dispatch slower than simple well-predicted while loop
+- **Nested-if unrolled refill**: 1.40x (180 MB/s) - 4 nested if statements instead of while loop. Still slower than original - GCC optimizes the while loop better
 - **Unroll XorShift**: Dictionary init is negligible portion of total time
 - **Character table in registers**: Same as above - init cost too small to matter
 - **Register pressure reduction**: un-caching min_pat/wsize - compiler -O3 already optimizes register allocation well
@@ -49,6 +51,7 @@ The directory contains code for the arm cortex optimized tamp component
 - **Simplify overlap to single loop (I-cache revisit)**: tested with -Os, 1.47x-1.51x vs baseline. No measurable improvement, but kept change for cleaner code (2 loops instead of 3)
 - **Move FLUSH to cold path (I-cache revisit)**: tested with -Os using `__attribute__((cold))`, 1.39x-1.54x vs baseline. No improvement, function call overhead negates any I-cache benefit
 - **Remove match_size=0 fast path (I-cache revisit)**: same as 9-bit Huffman table test - the well-predicted branch is still faster than table lookup even with -Os
+- **Unpack bitfields to separate uint8_t/uint16_t**: 1.39x (176 MB/s) - separating hot fields (bbp, wpos, skip) to avoid RMW at cleanup actually slower. GCC generates efficient 64-bit load + ubfx extraction for packed bitfields; separate loads have more overhead
 - **-O3 -flto**: 1.33x - LTO hurts ARM decompressor (was 180 MB/s, dropped to 172 MB/s). Standard got tiny boost.
 - **-march=native -mtune=native**: 1.38x - native tuning slightly worse than plain -O3 (1.41x)
 - **Prefetch (PLD)**: 1.40x - still hurts on real hardware (177 MB/s vs 180 MB/s baseline)
@@ -80,3 +83,5 @@ The directory contains code for the arm cortex optimized tamp component
 - **Baked-in huffman_bits in table**: Table stores actual bit count instead of (bits-1), eliminating +1 operation (GCC may already fold this, kept for clarity)
 - **256-entry Huffman table (eliminates & 0x7F mask)**: Same performance - 2x cache footprint offsets mask elimination, reverted to 128-entry
 - **Shift+mask vs double-shift for literal**: `(bb >> rshift) & mask` is slightly slower than `(bb << 1) >> clit_shift` - kept double-shift
+- **LSB-first bit buffer with ARM RBIT**: 1.32x (169 MB/s) - significantly slower. While refill becomes simpler (`bb |= RBIT8(byte) << bbp` vs `bb |= byte << (24-bbp)`), all multi-bit values (woff, literal, Huffman index) need bit-reversal when extracted. The reversal cost (~3 extra RBIT per token/literal) outweighs the refill savings. LSB-first only helps when data is natively LSB (x86 LE), not when converting from MSB-first format.
+- **`__restrict__` on function parameters**: 1.45x (186 MB/s) - adding `__restrict__` to all pointer parameters tells GCC the buffers don't overlap, enabling better load/store scheduling. Improved from 1.42x (183 MB/s).

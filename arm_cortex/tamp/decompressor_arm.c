@@ -11,12 +11,10 @@
  * See arm_cortex/README.md for benchmark results and optimization history.
  */
 
-#include <string.h>
 #include "decompressor_arm.h"
 #include "common_arm.h"
 
 #define FLUSH 15
-
 /**
  * Huffman decode table for match sizes 1-13 (plus FLUSH=15).
  * Indexed by 7 bits from the bit stream.
@@ -43,10 +41,10 @@ static const uint8_t HUFFMAN_TABLE[128] __attribute__((aligned(128))) = {
  *============================================================================*/
 
 tamp_res tamp_decompressor_read_header_arm(
-    TampConf *conf,
-    const unsigned char *input,
+    TampConf *__restrict__ conf,
+    const unsigned char *__restrict__ input,
     size_t input_size,
-    size_t *input_consumed_size
+    size_t *__restrict__ input_consumed_size
 ) {
     if (input_consumed_size) *input_consumed_size = 0;
     if (input_size == 0) return TAMP_INPUT_EXHAUSTED;
@@ -83,11 +81,13 @@ static tamp_res tamp_decompressor_populate_from_conf(
 }
 
 tamp_res tamp_decompressor_init_arm(
-    TampDecompressorArm *decompressor,
-    const TampConf *conf,
-    unsigned char *window
+    TampDecompressorArm *__restrict__ decompressor,
+    const TampConf *__restrict__ conf,
+    unsigned char *__restrict__ window
 ) {
-    memset(decompressor, 0, sizeof(TampDecompressorArm));
+    for(size_t i = 0; i < sizeof(TampDecompressorArm); i++){
+        *(((uint8_t*)(decompressor))+i) = 0x0;
+    }
     decompressor->window = window;
 
     if (conf) {
@@ -104,13 +104,13 @@ tamp_res tamp_decompressor_init_arm(
 
 __attribute__((hot, flatten))
 tamp_res tamp_decompressor_decompress_cb_arm(
-    TampDecompressorArm *decompressor,
-    unsigned char *output,
+    TampDecompressorArm *__restrict__ decompressor,
+    unsigned char *__restrict__ output,
     size_t output_size,
-    size_t *output_written_size,
-    const unsigned char *input,
+    size_t *__restrict__ output_written_size,
+    const unsigned char *__restrict__ input,
     size_t input_size,
-    size_t *input_consumed_size,
+    size_t *__restrict__ input_consumed_size,
     tamp_callback_t callback,
     void *user_data
 ) {
@@ -170,7 +170,7 @@ tamp_res tamp_decompressor_decompress_cb_arm(
             bbp += 8;
         }
 
-        /* Check for input/output exhaustion */
+        /* Check for i/unput/output exhaustion */
         if (TAMP_UNLIKELY(bbp == 0)) {
             res = TAMP_INPUT_EXHAUSTED;
             goto cleanup;
@@ -342,13 +342,13 @@ cleanup:
 
 /* Non-callback wrapper for simpler API */
 tamp_res tamp_decompressor_decompress_arm(
-    TampDecompressorArm *decompressor,
-    unsigned char *output,
+    TampDecompressorArm *__restrict__ decompressor,
+    unsigned char *__restrict__ output,
     size_t output_size,
-    size_t *output_written_size,
-    const unsigned char *input,
+    size_t *__restrict__ output_written_size,
+    const unsigned char *__restrict__ input,
     size_t input_size,
-    size_t *input_consumed_size
+    size_t *__restrict__ input_consumed_size
 ) {
     return tamp_decompressor_decompress_cb_arm(
         decompressor, output, output_size, output_written_size,

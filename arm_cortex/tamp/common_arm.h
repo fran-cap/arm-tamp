@@ -6,7 +6,6 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include <stdlib.h>
 
 // FC, Include standard functions so we can compile
 #ifndef TAMP_OK

@@ -34,8 +34,11 @@ typedef struct {
  * @param[out] conf Configuration read from header
  * @param[in] data Tamp compressed data stream.
  */
-tamp_res tamp_decompressor_read_header_arm(TampConf *conf, const unsigned char *input, size_t input_size,
-                                           size_t *input_consumed_size);
+tamp_res tamp_decompressor_read_header_arm(
+    TampConf *__restrict__ conf,
+    const unsigned char *__restrict__ input,
+    size_t input_size,
+    size_t *__restrict__ input_consumed_size);
 
 /**
  * @brief Initialize decompressor object.
@@ -48,7 +51,10 @@ tamp_res tamp_decompressor_read_header_arm(TampConf *conf, const unsigned char *
  *                   If conf.use_custom_dictionary is true, then the window must be
  *                   externally initialized and be at least as big as conf->window.
  */
-tamp_res tamp_decompressor_init_arm(TampDecompressorArm *decompressor, const TampConf *conf, unsigned char *window);
+tamp_res tamp_decompressor_init_arm(
+    TampDecompressorArm *__restrict__ decompressor,
+    const TampConf *__restrict__ conf,
+    unsigned char *__restrict__ window);
 
 /**
  * Callback-variant of tamp_compressor_decompress.
@@ -56,9 +62,16 @@ tamp_res tamp_decompressor_init_arm(TampDecompressorArm *decompressor, const Tam
  * @param[in] callback User-provided function to be called every decompression-cycle.
  * @param[in,out] user_data Passed along to callback.
  */
-tamp_res tamp_decompressor_decompress_cb_arm(TampDecompressorArm *decompressor, unsigned char *output, size_t output_size,
-                                             size_t *output_written_size, const unsigned char *input, size_t input_size,
-                                             size_t *input_consumed_size, tamp_callback_t callback, void *user_data);
+tamp_res tamp_decompressor_decompress_cb_arm(
+    TampDecompressorArm *__restrict__ decompressor,
+    unsigned char *__restrict__ output,
+    size_t output_size,
+    size_t *__restrict__ output_written_size,
+    const unsigned char *__restrict__ input,
+    size_t input_size,
+    size_t *__restrict__ input_consumed_size,
+    tamp_callback_t callback,
+    void *user_data);
 
 /**
  * @brief Decompress an input stream of data.
@@ -92,10 +105,14 @@ tamp_res tamp_decompressor_decompress_cb_arm(TampDecompressorArm *decompressor, 
  * TAMP_OUTPUT_FULL, in lieu of TAMP_OK.
  */
 // Non-inline declaration for external linkage
-tamp_res tamp_decompressor_decompress_arm(TampDecompressorArm *decompressor, unsigned char *output,
-                                           size_t output_size, size_t *output_written_size,
-                                           const unsigned char *input, size_t input_size,
-                                           size_t *input_consumed_size);
+tamp_res tamp_decompressor_decompress_arm(
+    TampDecompressorArm *__restrict__ decompressor,
+    unsigned char *__restrict__ output,
+    size_t output_size,
+    size_t *__restrict__ output_written_size,
+    const unsigned char *__restrict__ input,
+    size_t input_size,
+    size_t *__restrict__ input_consumed_size);
 
 #ifdef __cplusplus
 }
