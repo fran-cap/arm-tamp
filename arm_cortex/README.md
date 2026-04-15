@@ -12,13 +12,13 @@ The directory contains code for the arm cortex optimized tamp component
 | Cache | L1d: 256 KiB, L1i: 256 KiB, L2: 2 MiB, L3: 2 MiB |
 | RAM | 8 GB |
 | OS | Debian 12 (bookworm) / Raspberry Pi OS |
-| Compiler | GCC 12.2.0 |
+| Compiler | GCC 15.2.0 |
 
 ## Optimization notes:
 
-### Current speedup
-- **1.45x** with `-O3` (186 MB/s ARM vs 128 MB/s standard)
-- **1.32x** with `-Os` (142 MB/s ARM vs 108 MB/s standard)
+### Current V2 speedup for the decompressor
+- **1.540x** with `-O3` (197 MB/s ARM vs 128 MB/s standard)
+- **1.697x** with `-Os` (178 MB/s ARM vs 105 MB/s standard)
 
 # what hasnt worked:
 - **Table-driven unified decode (512-entry)**: 1.24x (158 MB/s) - single table lookup for token/literal/flush + huffman decode. 1KB table causes cache pressure and extraction logic (3 shifts/masks) more expensive than well-predicted branches
@@ -68,6 +68,8 @@ The directory contains code for the arm cortex optimized tamp component
 - **32-bit word loads for refill (Dougall)**: Not directly applicable - MSB-first 32-bit buffer would overflow; would need 64-bit buffer (already tried, no gain)
 - **LSB-first bit buffer (Giesen)**: Would require complete rewrite; MSB-first matches TAMP's compression format
 - **Rotate-based extraction (Giesen)**: Only helps when extracting from bottom after rotation; our MSB-first format extracts from top
+- **GCC `__attribute__((assume(...)))` hints (GCC 13+)**: 1.47x (187-190 MB/s) - tested multiple assumptions: config bounds (cwin 8-15, clit 5-8), shift bounds (cwin_shift 17-24), match_size bounds (0-13, then 2-16 after min_pat), woff < wsize, huffman_bits 1-7, copy loop count bounds. All either matched baseline (~190 MB/s) or were slightly slower (186-187 MB/s). GCC 15's optimizer already infers these bounds from code structure; explicit assumptions just affect code layout negatively. `fallthrough` attribute not applicable (no switch statements with intentional fallthrough).
+- **C23 stdbit.h `stdc_leading_zeros` (CLZ)**: 1.44x (182 MB/s) - attempted to combine token/literal detection (MSB check) and match_size flag check into single CLZ instruction. Pattern: lz==0 → literal, lz==1 → token+Huffman, lz≥2 → token+match_size=0. Slower than two well-predicted branches because CLZ overhead + code restructuring costs more than branch mispredictions (which are rare due to LIKELY hints). Other stdbit.h functions (rotate, popcount, bit_width, bit_floor) have no applicable use cases in the hot path.
 
 # worked:
 - **simplifying the OOB check**: woff is extracted with only cwin bits, it's already bounded by wsize
@@ -85,3 +87,11 @@ The directory contains code for the arm cortex optimized tamp component
 - **Shift+mask vs double-shift for literal**: `(bb >> rshift) & mask` is slightly slower than `(bb << 1) >> clit_shift` - kept double-shift
 - **LSB-first bit buffer with ARM RBIT**: 1.32x (169 MB/s) - significantly slower. While refill becomes simpler (`bb |= RBIT8(byte) << bbp` vs `bb |= byte << (24-bbp)`), all multi-bit values (woff, literal, Huffman index) need bit-reversal when extracted. The reversal cost (~3 extra RBIT per token/literal) outweighs the refill savings. LSB-first only helps when data is natively LSB (x86 LE), not when converting from MSB-first format.
 - **`__restrict__` on function parameters**: 1.45x (186 MB/s) - adding `__restrict__` to all pointer parameters tells GCC the buffers don't overlap, enabling better load/store scheduling. Improved from 1.42x (183 MB/s).
+- **Newer ARM64 GCC**: Moving to GCC 15 from GCC 12 gained 4MB/s for no code changes. ASM analysis shows GCC 15 optimizations:
+  - NEON auto-vectorization for overlap tmp[] copy (1 vector load vs 16 scalar ldrb) - **19 fewer loads**
+  - Better loop alignment (32-byte vs 8-byte) for I-cache
+  - Smarter bit testing (`tbnz x10, 30` on original bb vs `tbnz w16, #31` on shifted tbb)
+  - Smaller stack frame (256 vs 288 bytes)
+  - Total: 17 fewer memory ops (228 vs 245), 4 fewer instructions (599 vs 603)
+- **Indexed copy form (`out[i]=src[i]; out+=match_size`)**: +3 MB/s at `-Os` (174.6 → 177.6 MB/s). Applied to both no-overlap and overlap branches of fast-token and Huffman-token paths. Neutral at `-O3`. Same semantics as `*out++=*src++` but GCC's `-Os` pipeline produces a slightly cleaner indexed loop from this form.
+- **Unconditional 2-byte prefix copy in fast-token no-overlap path**: +3 MB/s at `-O3` (194.1 → 197.1 MB/s). `match_size == min_pat >= 2` is invariant and `match_size <= remaining` is already checked, so two `__builtin_memcpy(.,.,2)` calls are always safe. GCC `-O3` inlines them as `ldrh/strh`, collapsing the old 10-instruction byte loop (5 insts × 2 iters) to ~5 instructions total. Rare `min_pat > 2` tail falls back to the original indexed loop. Neutral at `-Os` (memcpy still inlines but prefix was already cheap there).

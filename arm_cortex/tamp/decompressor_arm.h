@@ -24,6 +24,7 @@ typedef struct {
 
     uint32_t skip_bytes : 4;  // Skip this many decompressed bytes (from previous
                               // output-buffer-limited decompression).
+    uint32_t v2 : 1;         // V2 format: backward distance encoding
 } TampDecompressorArm;
 
 /**
@@ -113,6 +114,15 @@ tamp_res tamp_decompressor_decompress_arm(
     const unsigned char *__restrict__ input,
     size_t input_size,
     size_t *__restrict__ input_consumed_size);
+
+/**
+ * No-callback variant with additional inline ASM optimizations.
+ * Eliminates callback register pressure and branch from the hot loop.
+ */
+tamp_res tamp_decompressor_decompress_nocb_arm(TampDecompressorArm *decompressor, unsigned char *output,
+                                                size_t output_size, size_t *output_written_size,
+                                                const unsigned char *input, size_t input_size,
+                                                size_t *input_consumed_size);
 
 #ifdef __cplusplus
 }
